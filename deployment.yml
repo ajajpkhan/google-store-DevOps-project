@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: main-frontend
-        image: <YOUR_ECR_URL>/frontend:latest
+        image: <placeholder>
         ports:
         - containerPort: 80
