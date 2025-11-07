@@ -1,0 +1,115 @@
+name: CI/CD for Google Store (Full Stack)
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-1.amazonaws.com
+  SERVICES: "frontend electronics phones computers earphones backend"
+  K8S_NAMESPACE: default
+  CLUSTER_NAME: abinash
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GIT_PAT }}
+
+      - name: 🔧 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📦 Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🛠 Build & push Docker images
+        run: |
+          set -e
+          IMAGE_TAG="${GITHUB_SHA}"
+
+          for service in $SERVICES; do
+            if [ "$service" = "frontend" ]; then
+              FOLDER="."
+            elif [ "$service" = "backend" ]; then
+              FOLDER="Backend"
+            else
+              FOLDER="$service"
+            fi
+
+            if [ ! -f "$FOLDER/Dockerfile" ]; then
+              echo "⚠️  Skipping $service (no Dockerfile found)"
+              continue
+            fi
+
+            REPO_NAME="google-store-$service"
+            IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
+
+            aws ecr describe-repositories --repository-names $REPO_NAME >/dev/null 2>&1 || \
+              aws ecr create-repository --repository-name $REPO_NAME
+
+            echo "🚀 Building $service ..."
+            docker build -t $IMAGE_URI $FOLDER
+            docker push $IMAGE_URI
+
+            DEPLOY_YML="$FOLDER/deployment.yml"
+            BACKEND_DEPLOY_YML="$FOLDER/backend-deployment.yml"
+
+            if [ -f "$DEPLOY_YML" ]; then
+              sed -i "s|image:.*|image: $IMAGE_URI|g" "$DEPLOY_YML"
+            elif [ -f "$BACKEND_DEPLOY_YML" ]; then
+              sed -i "s|image:.*|image: $IMAGE_URI|g" "$BACKEND_DEPLOY_YML"
+            fi
+          done
+
+      - name: 🔄 Commit updated deployment manifests
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add */deployment.yml Backend/backend-deployment.yml deployment.yml || true
+          git commit -m "🔄 Auto-update image tags after build" || echo "No changes to commit"
+          git push origin main || echo "⚠️ Git push skipped (maybe already up-to-date)"
+
+      - name: ☸️ Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION --alias github-actions
+          kubectl config use-context github-actions
+          kubectl get nodes
+
+      - name: 🚀 Apply Kubernetes manifests
+        run: |
+          set -e
+          for service in $SERVICES; do
+            if [ "$service" = "frontend" ]; then FOLDER="."
+            elif [ "$service" = "backend" ]; then FOLDER="Backend"
+            else FOLDER="$service"; fi
+
+            for file in service.yml deployment.yml autoscaler.yml backend-deployment.yml backend-service.yml; do
+              if [ -f "$FOLDER/$file" ]; then
+                echo "Applying $FOLDER/$file ..."
+                kubectl apply -f "$FOLDER/$file" -n $K8S_NAMESPACE
+              fi
+            done
+          done
+
+          if [ -f ingress.yml ]; then
+            echo "Applying ingress.yml ..."
+            kubectl apply -f ingress.yml -n $K8S_NAMESPACE --validate=false
+          fi
+
+      - name: ✅ Verify deployment
+        run: |
+          echo "🌍 Verifying deployed resources..."
+          kubectl get pods,svc,ingress -n $K8S_NAMESPACE
