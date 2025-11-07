@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
+      # 1️⃣ Checkout repository
       - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Configure AWS credentials
+      # 2️⃣ Configure AWS credentials (must have EKS permissions)
       - name: 🔧 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -32,11 +32,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Login to Amazon ECR
+      # 3️⃣ Login to Amazon ECR
       - name: 📦 Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4. Build, tag, and push Docker images
+      # 4️⃣ Build, tag, and push Docker images
       - name: 🛠 Build, tag, and push Docker images
         run: |
           for service in $SERVICES; do
@@ -50,51 +50,48 @@ jobs:
             # Build Docker image
             docker build -t $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG ./$service
 
-            # Push Docker image to ECR
+            # Push to ECR
             docker push $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG
 
-            # Update deployment.yml with new image
+            # Update deployment YAML
             if [ -f $service/deployment.yml ]; then
               sed -i "s|image:.*|image: $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG|g" $service/deployment.yml
             fi
           done
 
-      # 5. Commit updated deployment files
-      - name: 🔄 Commit updated deployment files
+      # 5️⃣ Commit updated deployment files (optional)
+      - name: 🔄 Commit deployment changes
         run: |
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
           git add */deployment.yml
           git commit -m "Update image tags in deployment files" || echo "No changes to commit"
-          git push || echo "Push failed (likely permissions)"
+          git push || echo "Push failed, probably due to permissions"
 
-      # 6. Configure kubectl for EKS
+      # 6️⃣ Configure kubectl for EKS
       - name: ☸️ Connect to EKS cluster
         run: |
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
-          kubectl config use-context arn:aws:eks:${{ env.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:cluster/$CLUSTER_NAME
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION --alias github-actions
+          kubectl config use-context github-actions
           kubectl get nodes
 
-      # 7. Deploy all YAML files
-      - name: 🚀 Apply Kubernetes manifests
+      # 7️⃣ Deploy Kubernetes manifests
+      - name: 🚀 Deploy to Kubernetes
         run: |
-          # Apply ingress first with path-based routing
-          if [ -f ingress.yml ]; then
-            kubectl apply -f ingress.yml --validate=false
-          fi
+          # Apply ingress first (for path-based routing)
+          kubectl apply -f ingress.yml --validate=false
 
-          # Deploy all services, deployments, and autoscalers
+          # Apply all services, deployments, and autoscalers
           for service in $SERVICES; do
             [ -f $service/service.yml ] && kubectl apply -f $service/service.yml
             [ -f $service/deployment.yml ] && kubectl apply -f $service/deployment.yml
             [ -f $service/autoscaler.yml ] && kubectl apply -f $service/autoscaler.yml
           done
 
-          # Apply frontend/main deployment and service if present
+          # Apply main frontend deployment and service
           [ -f deployment.yml ] && kubectl apply -f deployment.yml
           [ -f service.yml ] && kubectl apply -f service.yml
 
-      # 8. Verify resources
+      # 8️⃣ Verify deployment
       - name: ✅ Verify resources
-        run: |
-          kubectl get pods,svc,ingress -n $K8S_NAMESPACE
+        run: kubectl get pods,svc,ingress -n $K8S_NAMESPACE
