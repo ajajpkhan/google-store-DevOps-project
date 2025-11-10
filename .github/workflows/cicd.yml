@@ -1,9 +1,11 @@
-name: CI/CD - Build & Update YAMLs Once
+name: CI/CD for Shopping Site (Frontend + Backend)
 
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**/deployment.yml'   # 🚫 Prevent re-trigger when only image tags are updated
 
 env:
   AWS_REGION: ap-northeast-1
@@ -15,17 +17,18 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    if: github.actor != 'github-actions[bot]'
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       # 1️⃣ Checkout
       - name: 🧾 Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GIT_PAT }}
 
-      # 2️⃣ Configure AWS credentials
-      - name: 🔧 Configure AWS
+      # 2️⃣ Configure AWS
+      - name: 🔧 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -36,81 +39,86 @@ jobs:
       - name: 📦 Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build and push images
-      - name: 🏗️ Build & push images
-        id: build
+      # 4️⃣ Build & Push Docker images
+      - name: 🛠 Build and Push Docker Images
         run: |
           set -e
-          IMAGE_TAG="${GITHUB_SHA::7}"
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          IMAGE_TAG="${GITHUB_SHA}"
 
-          echo "📦 Building frontend services..."
+          # --- Frontend Services ---
           for service in $FRONTEND_SERVICES; do
             FOLDER="frontend/$service"
             REPO_NAME="shopping-site-$service"
             IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
 
             if [ ! -f "$FOLDER/Dockerfile" ]; then
-              echo "⚠️ Skipping $service (no Dockerfile)"
+              echo "⚠️ No Dockerfile in $FOLDER, skipping..."
               continue
             fi
 
+            echo "🚀 Building $service..."
             aws ecr describe-repositories --repository-names $REPO_NAME >/dev/null 2>&1 || \
               aws ecr create-repository --repository-name $REPO_NAME
 
             docker build -t $IMAGE_URI $FOLDER
             docker push $IMAGE_URI
 
-            echo "$service=$IMAGE_URI" >> image_list.txt
+            # Update deployment.yml with new image
+            sed -i "s|image:.*|image: $IMAGE_URI|g" "$FOLDER/deployment.yml"
           done
 
-          echo "📦 Building backend..."
+          # --- Backend Service ---
           FOLDER="backend"
           REPO_NAME="shopping-site-backend"
           IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
 
+          echo "🚀 Building backend..."
           aws ecr describe-repositories --repository-names $REPO_NAME >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name $REPO_NAME
 
           docker build -t $IMAGE_URI $FOLDER
           docker push $IMAGE_URI
-          echo "backend=$IMAGE_URI" >> image_list.txt
 
-          echo "✅ All images pushed successfully."
-          cat image_list.txt
+          sed -i "s|image:.*|image: $IMAGE_URI|g" "$FOLDER/backend-deployment.yml"
 
-      # 5️⃣ Update YAML files with new image URIs (fixed regex)
-      - name: 🧩 Update deployment.yml files
+      # 5️⃣ Commit updated image references
+      - name: 🔄 Commit updated YAML files
         run: |
-          set -e
-          while IFS='=' read -r service image; do
-            if [ "$service" = "backend" ]; then
-              yml_path="backend/deployment.yml"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+          git add frontend/**/deployment.yml backend/backend-deployment.yml
+
+          # Add skip ci to avoid retrigger
+          git commit -m "🔄 Update image tags after build [skip ci]" || echo "No changes to commit"
+
+          # Only push if there are actual changes
+          git diff --quiet && echo "⚠️ No changes detected, skipping push." || git push origin main
+
+      # 6️⃣ SSH Deploy to EC2
+      - name: 🚀 Deploy on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "🔄 Starting deployment on EC2..."
+
+            cd /home/ec2-user
+
+            if [ -d "shopping-site" ]; then
+              echo "📥 Pulling latest code..."
+              cd shopping-site
+              git pull origin main
             else
-              yml_path="frontend/$service/deployment.yml"
+              echo "📦 Cloning fresh repo..."
+              git clone https://github.com/${{ github.repository }} shopping-site
+              cd shopping-site
             fi
 
-            if [ -f "$yml_path" ]; then
-              echo "🔧 Updating image in $yml_path"
-              # This sed regex matches any line with "image:" even if it has spaces before/after
-              sed -i -E "s|(^[[:space:]]*image:[[:space:]]*)(.*)|\1$image|" "$yml_path"
-            else
-              echo "⚠️ $yml_path not found, skipping."
-            fi
-          done < image_list.txt
+            echo "🐳 Updating and restarting containers..."
+            docker compose down || true
+            docker compose up -d --build
 
-      # 6️⃣ Commit & push updates (only once)
-      - name: 🪄 Commit updated deployment.yml files
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add frontend/*/deployment.yml backend/deployment.yml || true
-
-          if git diff --cached --quiet; then
-            echo "✅ No YAML updates detected."
-          else
-            git commit -m "🔄 Updated image tags in deployment.yml [skip ci]"
-            git push origin main
-            echo "✅ YAMLs updated and pushed successfully."
-          fi
+            echo "✅ Deployment complete!"
