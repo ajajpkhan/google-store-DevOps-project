@@ -1,4 +1,4 @@
-name: CI/CD for Shopping Site (Frontend + Backend)
+name: CI/CD - Build & Update YAMLs Once
 
 on:
   push:
@@ -12,16 +12,16 @@ env:
   BACKEND_SERVICE: "backend"
 
 permissions:
-  contents: read
+  contents: write  # ✅ needed to push changes
 
 jobs:
-  deploy:
-    if: github.actor != 'github-actions[bot]'  # ✅ prevents infinite loop
+  build:
+    if: github.actor != 'github-actions[bot]'   # ✅ prevent infinite loops
     runs-on: ubuntu-latest
 
     steps:
       # 1️⃣ Checkout repo
-      - name: 🧾 Checkout repository
+      - name: 🧾 Checkout code
         uses: actions/checkout@v4
 
       # 2️⃣ Configure AWS credentials
@@ -36,83 +36,76 @@ jobs:
       - name: 📦 Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4️⃣ Build & Push Docker Images to ECR
-      - name: 🛠 Build and Push Docker Images
+      # 4️⃣ Build and push frontend & backend images
+      - name: 🛠 Build and push Docker images
+        id: push
         run: |
           set -e
           IMAGE_TAG="${GITHUB_SHA}"
 
-          echo "🚀 Building Frontend Images..."
+          echo "📦 Building frontend services..."
           for service in $FRONTEND_SERVICES; do
             FOLDER="frontend/$service"
             REPO_NAME="shopping-site-$service"
             IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
 
             if [ ! -f "$FOLDER/Dockerfile" ]; then
-              echo "⚠️ Skipping $service (no Dockerfile found)"
+              echo "⚠️ Skipping $service (no Dockerfile)"
               continue
             fi
 
-            echo "📦 Building $service..."
             aws ecr describe-repositories --repository-names $REPO_NAME >/dev/null 2>&1 || \
               aws ecr create-repository --repository-name $REPO_NAME
 
             docker build -t $IMAGE_URI $FOLDER
             docker push $IMAGE_URI
 
-            echo "$service=$IMAGE_URI" >> images.txt
+            echo "$service=$IMAGE_URI" >> image_list.txt
           done
 
-          echo "🚀 Building Backend Image..."
+          echo "📦 Building backend..."
           FOLDER="backend"
           REPO_NAME="shopping-site-backend"
           IMAGE_URI="$ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG"
-
           aws ecr describe-repositories --repository-names $REPO_NAME >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name $REPO_NAME
 
           docker build -t $IMAGE_URI $FOLDER
           docker push $IMAGE_URI
+          echo "backend=$IMAGE_URI" >> image_list.txt
 
-          echo "backend=$IMAGE_URI" >> images.txt
+          echo "✅ All images pushed."
+          cat image_list.txt
 
-          echo "✅ All images pushed successfully"
-          cat images.txt
-
-      # 5️⃣ SSH into EC2 and deploy
-      - name: 🚀 Deploy to EC2
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            echo "🔄 Starting deployment on EC2..."
-
-            cd /home/ec2-user
-
-            # Clone repo if not present
-            if [ ! -d "shopping-site" ]; then
-              echo "📦 Cloning repository..."
-              git clone https://github.com/${{ github.repository }} shopping-site
+      # 5️⃣ Update YAML files with new image tags
+      - name: 🧩 Update deployment.yml files
+        run: |
+          set -e
+          while IFS='=' read -r service image; do
+            if [ "$service" = "backend" ]; then
+              yml_path="backend/deployment.yml"
+            else
+              yml_path="frontend/$service/deployment.yml"
             fi
 
-            cd shopping-site
-            git pull origin main
+            if [ -f "$yml_path" ]; then
+              echo "🧠 Updating $yml_path → $image"
+              sed -i "s|image:.*|image: $image|g" "$yml_path"
+            fi
+          done < image_list.txt
 
-            echo "🧩 Updating image tags in deployment.yml files..."
-            while IFS='=' read -r service image; do
-              echo "➡️ Updating $service image to $image"
-              if [ "$service" = "backend" ]; then
-                sed -i "s|image:.*|image: $image|g" backend/backend-deployment.yml
-              else
-                sed -i "s|image:.*|image: $image|g" frontend/$service/deployment.yml
-              fi
-            done < <(cat /tmp/images.txt 2>/dev/null || echo "")
+      # 6️⃣ Commit and push YAML updates
+      - name: 🪄 Commit updated YAMLs
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-            echo "🐳 Rebuilding and starting containers..."
-            docker compose down || true
-            docker compose up -d --build
+          git add frontend/*/deployment.yml backend/deployment.yml || true
 
-            echo "✅ Deployment completed successfully!"
-
+          if git diff --cached --quiet; then
+            echo "✅ No YAML changes to commit."
+          else
+            git commit -m "🔄 Update image tags in deployment.yml [skip ci]"
+            git push origin main
+            echo "✅ YAMLs updated and pushed to GitHub."
+          fi
