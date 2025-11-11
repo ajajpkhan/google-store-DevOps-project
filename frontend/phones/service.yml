@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: phones-frontend-service
+  name: phones-service
   labels:
-    app: phones-frontend
+    app: phones
 spec:
-  type: ClusterIP       # 👈 Internal access only
+  type: ClusterIP
   selector:
-    app: phones-frontend
+    app: phones
   ports:
     - protocol: TCP
       port: 80
