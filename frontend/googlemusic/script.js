@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', function() {
         {
             title: "cheri cheri lady",
             artist: "Modern Talking",
-            src: "https://optimistic-violet-wagcttfwc4.edgeone.app/Lady%20Gaga,%20Bruno%20Mars%20-%20Die%20With%20A%20Smile%20(Official%20Music%20Video).mp3",
+            src: "https://moaning-indigo-a1f05wrd8c.edgeone.app/Cheri_Cheri_Lady.mp3",
             cover: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQVV0SIVMXyjTpUiM39U9SkYJbP5EMpJx9kmg&s",
             duration: "3:23"
         },
@@ -285,4 +285,5 @@ document.addEventListener('DOMContentLoaded', function() {
     albumArt.addEventListener('load', function() {
         this.style.opacity = 1;
     });
+
 });
