@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
     
     <style>
+        /* [Intact: Styles Unchanged] */
         :root {
             --primary: #4361ee;
             --secondary: #3f37c9;
@@ -776,11 +777,12 @@
                     <div id="plansContainer">
                         <!-- Plans will be dynamically loaded here -->
                     </div>
+                    <!-- The amount will be automatically taken from the selected plan above. -->
                     <div class="form-group">
-                        <label>Or Enter Custom Amount</label>
+                        <label>Amount</label>
                         <div class="custom-amount">
                             <span>₹</span>
-                            <input type="number" id="customAmount" placeholder="Enter amount" min="10" max="5000">
+                            <input type="number" id="customAmount" placeholder="Auto-filled from plan" min="10" max="5000" readonly disabled style="background-color: #f1f3f4; cursor: not-allowed;">
                         </div>
                     </div>
                     <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
@@ -1504,61 +1506,7 @@
                 history.replaceState(null, '', location.pathname + location.search);
             });
         });
-
-        // ======= Upload Receipt to Flask Backend =======
-        document.getElementById("uploadReceiptBtn").addEventListener("click", async () => {
-            const fileInput = document.getElementById("receiptFile");
-
-            if (!fileInput.files.length) {
-                alert("Please select a receipt file");
-                return;
-            }
-
-            let file = fileInput.files[0];
-
-            // Read file content as text
-            let receiptText = await file.text();
-
-            // ====== REQUIRED FIELDS (You can edit these) ======
-            let mobile = "9999999999";     // Add your mobile input
-            let category = "googlepay";    // fixed category
-
-            try {
-                const response = await fetch("http://18.181.35.96:5000/upload_receipt", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        receipt_text: receiptText,
-                        category: category,
-                        mobile: mobile
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    alert("Receipt uploaded successfully!");
-                    console.log("Uploaded S3 URL:", data.s3_url);
-                } else {
-                    alert("Upload Error: " + data.error);
-                }
-            } catch (err) {
-                console.error("Network Error:", err);
-                alert("Error uploading receipt: Failed to fetch");
-            }
-        });
-
-        // ======= Open Payment Modal =======
-        document.getElementById("openPayment").addEventListener("click", () => {
-            document.getElementById("paymentModal").style.display = "flex";
-        });
-
-        // ======= Close Modal =======
-        document.getElementById("paymentClose").addEventListener("click", () => {
-            document.getElementById("paymentModal").style.display = "none";
-        });
+        
     </script>
 </body>
 </html>
