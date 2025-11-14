@@ -52,7 +52,14 @@ document.addEventListener('DOMContentLoaded', function() {
             src: "https://intact-fuchsia-tanizit5ua.edgeone.app/Let%20Me%20Down%20Slowly%20x%20Main%20Dhoondne%20Ko%20Zamaane%20Mein%20(Gravero%20Mashup)%20_%20Full%20Version.mp3",
             cover: "https://i.ytimg.com/vi/wqUFuZyR-xA/maxresdefault.jpg",
             duration: "3:46"
-        }
+        },
+        {
+            title: "Ranjheya Ve",
+            artist: "Zain Zohaib",
+            src: "https://secret-amber-2uyqkkfbec.edgeone.app/Ranjheya%20Ve%20%20%20Zain%20Zohaib%20%20%20Yratta%20media.mp3",
+            cover: "https://i.ytimg.com/vi/MVvEUAymQFM/maxresdefault.jpg",
+            duration: "3:46"
+        },
     ];
     
     // Player state
@@ -287,3 +294,4 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
 });
+
